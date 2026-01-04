@@ -8,11 +8,11 @@ from tkinter import filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
 RESULT_DIR = APP_DIR / "result_AIRR_outfmat"
-# Use 8.3 short path to avoid non-ASCII issues.
-REF_DIR = Path(r"C:\Users\YOHEIF~1\Desktop\IGBLAS~1")
-DB_DIR = REF_DIR / "db"
+# Full path to reference data (can include non-ASCII).
+REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ")
+DB_DIR = REF_DIR_FULL / "db"
 IGBLAST = Path(r"C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe")
-AUX_FILE = REF_DIR / "optional_file" / "human_gl.aux"
+AUX_FILE = REF_DIR_FULL / "optional_file" / "human_gl.aux"
 
 KERNEL32 = ctypes.windll.kernel32
 KERNEL32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -57,7 +57,8 @@ def run_igblast(input_path, log):
     out_path = RESULT_DIR / out_name
 
     env = os.environ.copy()
-    env["IGDATA"] = short_path(str(REF_DIR))
+    ref_short = short_path(str(REF_DIR_FULL))
+    env["IGDATA"] = ref_short
 
     args = [
         str(IGBLAST),
