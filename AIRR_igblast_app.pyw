@@ -10,9 +10,8 @@ APP_DIR = Path(__file__).resolve().parent
 RESULT_DIR = APP_DIR / "result_AIRR_outfmat"
 # Full path to reference data (can include non-ASCII).
 REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ")
-DB_DIR = REF_DIR_FULL / "db"
 IGBLAST = Path(r"C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe")
-AUX_FILE = REF_DIR_FULL / "optional_file" / "human_gl.aux"
+REF_DIR_USE = None
 
 KERNEL32 = ctypes.windll.kernel32
 KERNEL32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -25,15 +24,47 @@ def short_path(path_str):
     return buf.value if ret else path_str
 
 
+def get_ref_dir():
+    global REF_DIR_USE
+    if REF_DIR_USE is not None:
+        return REF_DIR_USE
+
+    ref_short = Path(short_path(str(REF_DIR_FULL)))
+    if (ref_short / "db").exists():
+        REF_DIR_USE = ref_short
+        return REF_DIR_USE
+
+    # Create an ASCII junction under the app folder if 8.3 short path isn't available.
+    junction = APP_DIR / "refdata"
+    if not junction.exists():
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(junction), str(REF_DIR_FULL)],
+                capture_output=True,
+                text=True,
+            )
+        except Exception:
+            pass
+    if junction.exists():
+        REF_DIR_USE = junction
+        return REF_DIR_USE
+
+    REF_DIR_USE = REF_DIR_FULL
+    return REF_DIR_USE
+
+
 def check_prereq():
     missing = []
     if not IGBLAST.exists():
         missing.append(str(IGBLAST))
+    ref_dir = get_ref_dir()
+    db_dir = ref_dir / "db"
+    aux_file = ref_dir / "optional_file" / "human_gl.aux"
     for name in ("IMGT_IGHV.imgt.nsq", "IMGT_IGHD.imgt.nsq", "IMGT_IGHJ.imgt.nsq"):
-        if not (DB_DIR / name).exists():
-            missing.append(str(DB_DIR / name))
-    if not AUX_FILE.exists():
-        missing.append(str(AUX_FILE))
+        if not (db_dir / name).exists():
+            missing.append(str(db_dir / name))
+    if not aux_file.exists():
+        missing.append(str(aux_file))
     if missing:
         msg = "Missing files:\n" + "\n".join(missing)
         messagebox.showerror("Missing files", msg)
@@ -57,16 +88,19 @@ def run_igblast(input_path, log):
     out_path = RESULT_DIR / out_name
 
     env = os.environ.copy()
-    ref_short = short_path(str(REF_DIR_FULL))
+    ref_dir = get_ref_dir()
+    ref_short = short_path(str(ref_dir))
+    db_dir = ref_dir / "db"
+    aux_file = ref_dir / "optional_file" / "human_gl.aux"
     env["IGDATA"] = ref_short
 
     args = [
         str(IGBLAST),
         "-query", short_path(str(in_path)),
-        "-germline_db_V", short_path(str(DB_DIR / "IMGT_IGHV.imgt")),
-        "-germline_db_D", short_path(str(DB_DIR / "IMGT_IGHD.imgt")),
-        "-germline_db_J", short_path(str(DB_DIR / "IMGT_IGHJ.imgt")),
-        "-auxiliary_data", short_path(str(AUX_FILE)),
+        "-germline_db_V", short_path(str(db_dir / "IMGT_IGHV.imgt")),
+        "-germline_db_D", short_path(str(db_dir / "IMGT_IGHD.imgt")),
+        "-germline_db_J", short_path(str(db_dir / "IMGT_IGHJ.imgt")),
+        "-auxiliary_data", short_path(str(aux_file)),
         "-domain_system", "imgt",
         "-organism", "human",
         "-ig_seqtype", "Ig",
