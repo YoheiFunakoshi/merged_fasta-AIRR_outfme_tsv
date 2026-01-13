@@ -29,6 +29,7 @@ FILTER_OPTIONS = [
 LAST_RUN_SUMMARY = ""
 INVALID_NAME_CHARS = '<>:"/\\|?*'
 MAX_PATH_LEN = 240
+FILE_PREFIX_MAX = 60
 
 
 def short_path(path_str):
@@ -44,15 +45,17 @@ def sanitize_name(name):
     return safe if safe else "output"
 
 
-def make_output_dir(in_path, vlen_min, log=None):
+def make_file_prefix(name, max_len):
+    safe = sanitize_name(name)
+    if max_len <= 0:
+        return ""
+    return safe[:max_len].rstrip(" .")
+
+
+def make_output_dir(in_path, vlen_min, file_name, log=None):
     filter_tag = "nofilter" if vlen_min is None else f"vlen{vlen_min}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_stem = sanitize_name(in_path.stem)
-    file_name = (
-        f"igblast.airr.vlenmin{vlen_min}.tsv"
-        if vlen_min is not None
-        else "igblast.airr.tsv"
-    )
 
     def build_dir(stem):
         return RESULT_DIR / f"{stem}__{filter_tag}__{timestamp}"
@@ -79,6 +82,25 @@ def make_output_dir(in_path, vlen_min, log=None):
         log("Output folder name shortened to avoid Windows path length limits.")
     out_dir.mkdir(parents=True)
     return out_dir
+
+
+def make_output_names(out_dir, stem, vlen_min, log=None):
+    for length in (FILE_PREFIX_MAX, 40, 20, 10, 0):
+        prefix = make_file_prefix(stem, length)
+        if prefix:
+            out_name = f"{prefix}.igblast.airr.tsv"
+            filtered_name = f"{prefix}.igblast.airr.vlenmin{vlen_min}.tsv"
+        else:
+            out_name = "igblast.airr.tsv"
+            filtered_name = f"igblast.airr.vlenmin{vlen_min}.tsv"
+        if len(str(out_dir / out_name)) > MAX_PATH_LEN:
+            continue
+        if vlen_min is not None and len(str(out_dir / filtered_name)) > MAX_PATH_LEN:
+            continue
+        if length < FILE_PREFIX_MAX and log is not None:
+            log("Output file name shortened to avoid Windows path length limits.")
+        return out_name, filtered_name
+    return "igblast.airr.tsv", f"igblast.airr.vlenmin{vlen_min}.tsv"
 
 
 def write_summary(out_dir, in_path, out_path, vlen_min, filter_summary=None, filtered_path=None):
@@ -196,8 +218,12 @@ def run_igblast(input_path, vlen_min, log):
         messagebox.showerror("Input", "Input file not found.")
         return
 
-    out_dir = make_output_dir(in_path, vlen_min, log)
-    out_name = "igblast.airr.tsv"
+    base_prefix = make_file_prefix(in_path.stem, FILE_PREFIX_MAX)
+    base_out_name = (
+        f"{base_prefix}.igblast.airr.tsv" if base_prefix else "igblast.airr.tsv"
+    )
+    out_dir = make_output_dir(in_path, vlen_min, base_out_name, log)
+    out_name, filtered_name = make_output_names(out_dir, in_path.stem, vlen_min, log)
     out_path = out_dir / out_name
 
     env = os.environ.copy()
@@ -240,7 +266,7 @@ def run_igblast(input_path, vlen_min, log):
             LAST_RUN_SUMMARY = summary_text
             messagebox.showinfo("Complete", f"Output:\n{out_path}\nSummary:\n{summary_path}")
             return
-        filtered_path = out_dir / f"igblast.airr.vlenmin{vlen_min}.tsv"
+        filtered_path = out_dir / filtered_name
         log("Filtering TSV by vlen_ungapped...")
         try:
             summary = filter_airr_tsv(out_path, filtered_path, vlen_min, log)
