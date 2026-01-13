@@ -36,6 +36,8 @@ INVALID_NAME_CHARS = '<>:"/\\|?*'
 MAX_PATH_LEN = 240
 FILE_PREFIX_MAX = 60
 THREAD_DEFAULT = ""
+V_PENALTY_DEFAULT = ""
+EXTEND_ALIGN5END_DEFAULT = False
 
 
 def short_path(path_str):
@@ -62,11 +64,13 @@ def load_config():
         return {}
 
 
-def save_config(igblast_path, ref_dir, threads):
+def save_config(igblast_path, ref_dir, threads, v_penalty, extend_align5end):
     data = {
         "igblast_path": igblast_path,
         "ref_dir": ref_dir,
         "threads": threads,
+        "v_penalty": v_penalty,
+        "extend_align5end": extend_align5end,
     }
     with CONFIG_PATH.open("w", encoding="utf-8") as fout:
         json.dump(data, fout, ensure_ascii=False, indent=2)
@@ -148,6 +152,8 @@ def write_summary(
     igblast_path,
     ref_dir,
     threads,
+    v_penalty,
+    extend_align5end,
     filter_summary=None,
     filtered_path=None,
 ):
@@ -162,6 +168,11 @@ def write_summary(
         lines.append(f"Threads: {threads}")
     else:
         lines.append("Threads: default")
+    if v_penalty is None:
+        lines.append("V_penalty: default")
+    else:
+        lines.append(f"V_penalty: {v_penalty}")
+    lines.append(f"Extend_align5end: {'on' if extend_align5end else 'off'}")
     if vlen_min is None:
         lines.append("Filter: none")
     else:
@@ -287,7 +298,18 @@ def parse_threads(text):
     return num
 
 
-def run_igblast(input_path, vlen_min, num_threads, log):
+def parse_v_penalty(text):
+    value = text.strip()
+    if not value:
+        return None
+    try:
+        num = int(value)
+    except ValueError as exc:
+        raise ValueError("V_penalty must be an integer (e.g., -1, -3).") from exc
+    return num
+
+
+def run_igblast(input_path, vlen_min, num_threads, v_penalty, extend_align5end, log):
     global LAST_RUN_SUMMARY
     LAST_RUN_SUMMARY = ""
     if not check_prereq():
@@ -330,6 +352,10 @@ def run_igblast(input_path, vlen_min, num_threads, log):
     ]
     if num_threads:
         args.extend(["-num_threads", str(num_threads)])
+    if v_penalty is not None:
+        args.extend(["-V_penalty", str(v_penalty)])
+    if extend_align5end:
+        args.append("-extend_align5end")
 
     log("Running IgBLAST...")
     try:
@@ -354,6 +380,8 @@ def run_igblast(input_path, vlen_min, num_threads, log):
                 str(IGBLAST),
                 str(REF_DIR_FULL),
                 num_threads,
+                v_penalty,
+                extend_align5end,
             )
             LAST_RUN_SUMMARY = summary_text
             messagebox.showinfo("Complete", f"Output:\n{out_path}\nSummary:\n{summary_path}")
@@ -374,6 +402,8 @@ def run_igblast(input_path, vlen_min, num_threads, log):
             str(IGBLAST),
             str(REF_DIR_FULL),
             num_threads,
+            v_penalty,
+            extend_align5end,
             filter_summary=summary,
             filtered_path=filtered_path,
         )
@@ -389,7 +419,7 @@ def run_igblast(input_path, vlen_min, num_threads, log):
 def main():
     root = tk.Tk()
     root.title("Merged FASTA -> AIRR outfmt 19")
-    root.geometry("840x540")
+    root.geometry("900x620")
 
     frame = tk.Frame(root, padx=10, pady=10)
     frame.pack(fill=tk.BOTH, expand=True)
@@ -445,13 +475,27 @@ def main():
     threads_entry = tk.Entry(frame, textvariable=threads_var, width=10)
     threads_entry.grid(row=7, column=0, sticky="w")
 
-    tk.Label(frame, text="Filter (vlen_ungapped):").grid(row=8, column=0, sticky="w")
+    tk.Label(frame, text="V_penalty:").grid(row=8, column=0, sticky="w")
+    v_penalty_value = config.get("v_penalty", V_PENALTY_DEFAULT)
+    v_penalty_var = tk.StringVar(value="" if v_penalty_value is None else str(v_penalty_value))
+    v_penalty_entry = tk.Entry(frame, textvariable=v_penalty_var, width=10)
+    v_penalty_entry.grid(row=9, column=0, sticky="w")
+
+    extend_value = config.get("extend_align5end", EXTEND_ALIGN5END_DEFAULT)
+    extend_var = tk.BooleanVar(value=bool(extend_value))
+    tk.Checkbutton(
+        frame,
+        text="Extend align 5' end (-extend_align5end)",
+        variable=extend_var,
+    ).grid(row=10, column=0, columnspan=2, sticky="w")
+
+    tk.Label(frame, text="Filter (vlen_ungapped):").grid(row=11, column=0, sticky="w")
     filter_labels = [label for label, _ in FILTER_OPTIONS]
     filter_var = tk.StringVar(value=filter_labels[0])
-    tk.OptionMenu(frame, filter_var, *filter_labels).grid(row=8, column=1, sticky="w")
+    tk.OptionMenu(frame, filter_var, *filter_labels).grid(row=11, column=1, sticky="w")
 
     log_box = tk.Text(frame, height=10)
-    log_box.grid(row=9, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
+    log_box.grid(row=12, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
 
     def log(msg):
         log_box.insert(tk.END, msg + "\n")
@@ -463,14 +507,16 @@ def main():
         ref_path = ref_var.get().strip() or str(DEFAULT_REF_DIR_FULL)
         try:
             threads = parse_threads(threads_var.get())
+            v_penalty = parse_v_penalty(v_penalty_var.get())
         except ValueError as exc:
-            messagebox.showerror("Threads", str(exc))
-            return None, False
+            messagebox.showerror("Settings", str(exc))
+            return None, None, None, False
+        extend_align5end = bool(extend_var.get())
         IGBLAST = Path(igblast_path)
         REF_DIR_FULL = Path(ref_path)
         REF_DIR_USE = None
-        save_config(igblast_path, ref_path, threads)
-        return threads, True
+        save_config(igblast_path, ref_path, threads, v_penalty, extend_align5end)
+        return threads, v_penalty, extend_align5end, True
 
     def run():
         label = filter_var.get()
@@ -479,13 +525,20 @@ def main():
             if opt_label == label:
                 vlen_min = opt_value
                 break
-        threads, ok = update_settings()
+        threads, v_penalty, extend_align5end, ok = update_settings()
         if not ok:
             return
-        run_igblast(input_var.get().strip(), vlen_min, threads, log)
+        run_igblast(
+            input_var.get().strip(),
+            vlen_min,
+            threads,
+            v_penalty,
+            extend_align5end,
+            log,
+        )
 
     def save_settings():
-        _, ok = update_settings()
+        _, _, _, ok = update_settings()
         if ok:
             messagebox.showinfo("Settings", "Settings saved.")
 
@@ -499,13 +552,13 @@ def main():
         messagebox.showinfo("Copy summary", "Copied to clipboard.")
 
     button_frame = tk.Frame(frame)
-    button_frame.grid(row=10, column=0, columnspan=2, pady=10, sticky="we")
+    button_frame.grid(row=13, column=0, columnspan=2, pady=10, sticky="we")
     tk.Button(button_frame, text="Run", command=run).pack(side=tk.LEFT)
     tk.Button(button_frame, text="Save settings", command=save_settings).pack(side=tk.LEFT, padx=(8, 0))
     tk.Button(button_frame, text="Copy summary", command=copy_summary).pack(side=tk.RIGHT)
 
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(9, weight=1)
+    frame.rowconfigure(12, weight=1)
 
     root.mainloop()
 

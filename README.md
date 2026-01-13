@@ -9,6 +9,7 @@
 - 実行ごとに結果とsummaryを1フォルダにまとめて出力
 - IgBLAST/参照データのパスをGUIで選択して保存
 - `-num_threads` を指定して高速化（任意）
+- `-V_penalty` / `-extend_align5end` を任意で指定
 
 ## アプリの場所
 - 起動用ショートカット: `AIRR_igblast_app.lnk`
@@ -115,6 +116,8 @@ for inp in inputs:
 - IgBLAST exe: `igblastn.exe` のパスを指定します。
 - Reference data folder: `db/`、`internal_data/`、`optional_file/` を含む参照データのルートフォルダです。
 - Threads (-num_threads): IgBLASTのスレッド数です。空欄ならデフォルト動作です。
+- V_penalty: Vアラインのミスマッチペナルティです（例: -1, -3）。空欄ならデフォルト動作です。
+- Extend align 5' end: 5'側のアライン表示を拡張します（表示のみ）。
 - Filter (vlen_ungapped): `v_sequence_alignment` のギャップ除外長でフィルタします（なし/80/100/120/150）。
 - Log: 実行ログと警告を表示します。
 
@@ -139,6 +142,8 @@ Output: ...\<入力名>.igblast.airr.tsv
 IgBLAST: C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe
 Refdata: C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ
 Threads: 4
+V_penalty: -1
+Extend_align5end: on
 Filter: vlen_ungapped >= 150
 Filtered: ...\<入力名>.igblast.airr.vlenmin150.tsv
 Filter vlen_ungapped >= 150: kept 17096/29395, missing 46
