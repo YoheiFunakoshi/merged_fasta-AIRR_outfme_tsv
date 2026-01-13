@@ -6,6 +6,7 @@
 - マージ済みFASTAを選択してIgBLASTを実行
 - AIRR outfmt 19 TSVを出力
 - vlen_ungapped フィルタをかけた別TSVを任意で出力（元TSVは保持）
+- 実行ごとに結果とsummaryを1フォルダにまとめて出力
 
 ## アプリの場所
 - 起動用ショートカット: `AIRR_igblast_app.lnk`
@@ -101,14 +102,33 @@ for inp in inputs:
 2. マージ済みFASTA（extendedFrags.fasta）を選択
 3. Filter（vlen_ungapped）を選択（任意、なし/80/100/120/150）
 4. Runを押す
-5. `result_AIRR_outfmat` に `*.igblast.airr.tsv` が出力される
-6. フィルタ有効時は `result_AIRR_outfmat/vlen{N}/` に `*.igblast.airr.vlenmin{N}.tsv` が追加で出力される
+5. `result_AIRR_outfmat/<入力名>__vlen{N or nofilter}__YYYYmmdd_HHMMSS/` が作成される
+6. フォルダ内に `igblast.airr.tsv` と `summary.txt` が出力される
+7. フィルタ有効時は `igblast.airr.vlenmin{N}.tsv` が追加で出力される
+8. 必要なら「Copy summary」でフィルタ結果サマリをクリップボードにコピー
+
+### 出力フォルダの中身
+- `igblast.airr.tsv`: 元のIgBLAST出力（変更しない）
+- `igblast.airr.vlenmin{N}.tsv`: フィルタ版（N選択時のみ）
+- `summary.txt`: 入力/出力/フィルタ条件/件数サマリ
+
+### summary.txt の例
+```
+Run folder: ...\result_AIRR_outfmat\<入力名>__vlen150__YYYYmmdd_HHMMSS
+Input: C:\path\to\input.fasta
+Output: ...\igblast.airr.tsv
+Filter: vlen_ungapped >= 150
+Filtered: ...\igblast.airr.vlenmin150.tsv
+Filter vlen_ungapped >= 150: kept 17096/29395, missing 46
+Timestamp: 2026-01-13 21:47:27
+```
 
 ## 補足
 - 参照DBは検体固有ではなく「ヒトIgH用の一般的DB」です。
 - 参照DBを更新したい場合は、IMGTのFASTAを更新し、makeblastdbを再実行してください。
 
 ## 注意（vlen_ungapped フィルタ）
-- 元TSVは変更せず、フィルタ版は `result_AIRR_outfmat/vlen{N}/` に保存されます。
+- 元TSVは変更せず、フィルタ版は実行フォルダ内に保存されます。
 - 判定は `v_sequence_alignment` から `vlen_ungapped` を算出します（`NA`/空は除外）。
 - フィルタを「なし」にすると元TSVのみ出力します。
+- Windowsのパス長制限を避けるため、フォルダ名が長い場合は自動的に短縮されることがあります。

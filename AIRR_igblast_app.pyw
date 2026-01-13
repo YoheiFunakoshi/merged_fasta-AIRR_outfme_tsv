@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 import ctypes
 import csv
+from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -25,12 +26,80 @@ FILTER_OPTIONS = [
     ("vlen_ungapped >= 120", 120),
     ("vlen_ungapped >= 150", 150),
 ]
+LAST_RUN_SUMMARY = ""
+INVALID_NAME_CHARS = '<>:"/\\|?*'
+MAX_PATH_LEN = 240
 
 
 def short_path(path_str):
     buf = ctypes.create_unicode_buffer(260)
     ret = KERNEL32.GetShortPathNameW(path_str, buf, 260)
     return buf.value if ret else path_str
+
+
+def sanitize_name(name):
+    safe = "".join(
+        "_" if c in INVALID_NAME_CHARS or ord(c) > 127 else c for c in name
+    ).rstrip(" .")
+    return safe if safe else "output"
+
+
+def make_output_dir(in_path, vlen_min, log=None):
+    filter_tag = "nofilter" if vlen_min is None else f"vlen{vlen_min}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_stem = sanitize_name(in_path.stem)
+    file_name = (
+        f"igblast.airr.vlenmin{vlen_min}.tsv"
+        if vlen_min is not None
+        else "igblast.airr.tsv"
+    )
+
+    def build_dir(stem):
+        return RESULT_DIR / f"{stem}__{filter_tag}__{timestamp}"
+
+    out_dir = build_dir(safe_stem)
+    shortened = False
+    if len(str(out_dir / file_name)) > MAX_PATH_LEN:
+        for length in (60, 40, 20):
+            stem = safe_stem[:length].rstrip(" .")
+            out_dir = build_dir(stem)
+            if len(str(out_dir / file_name)) <= MAX_PATH_LEN:
+                shortened = True
+                break
+        else:
+            out_dir = RESULT_DIR / f"run__{filter_tag}__{timestamp}"
+            shortened = True
+
+    base_dir = out_dir
+    counter = 1
+    while out_dir.exists():
+        out_dir = RESULT_DIR / f"{base_dir.name}_{counter}"
+        counter += 1
+    if shortened and log is not None:
+        log("Output folder name shortened to avoid Windows path length limits.")
+    out_dir.mkdir(parents=True)
+    return out_dir
+
+
+def write_summary(out_dir, in_path, out_path, vlen_min, filter_summary=None, filtered_path=None):
+    lines = [
+        f"Run folder: {out_dir}",
+        f"Input: {in_path}",
+        f"Output: {out_path}",
+    ]
+    if vlen_min is None:
+        lines.append("Filter: none")
+    else:
+        lines.append(f"Filter: vlen_ungapped >= {vlen_min}")
+    if filtered_path is not None:
+        lines.append(f"Filtered: {filtered_path}")
+    if filter_summary:
+        lines.append(filter_summary)
+    lines.append(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    text = "\n".join(lines)
+    summary_path = out_dir / "summary.txt"
+    summary_path.write_text(text, encoding="utf-8")
+    return summary_path, text
 
 
 def get_ref_dir():
@@ -115,6 +184,8 @@ def filter_airr_tsv(in_path, out_path, vlen_min, log):
 
 
 def run_igblast(input_path, vlen_min, log):
+    global LAST_RUN_SUMMARY
+    LAST_RUN_SUMMARY = ""
     if not check_prereq():
         return
     if not input_path:
@@ -125,9 +196,9 @@ def run_igblast(input_path, vlen_min, log):
         messagebox.showerror("Input", "Input file not found.")
         return
 
-    RESULT_DIR.mkdir(exist_ok=True)
-    out_name = in_path.stem + ".igblast.airr.tsv"
-    out_path = RESULT_DIR / out_name
+    out_dir = make_output_dir(in_path, vlen_min, log)
+    out_name = "igblast.airr.tsv"
+    out_path = out_dir / out_name
 
     env = os.environ.copy()
     ref_dir = get_ref_dir()
@@ -165,11 +236,11 @@ def run_igblast(input_path, vlen_min, log):
     if proc.returncode == 0 and out_path.exists():
         log(f"Done: {out_path}")
         if vlen_min is None:
-            messagebox.showinfo("Complete", f"Output:\n{out_path}")
+            summary_path, summary_text = write_summary(out_dir, in_path, out_path, vlen_min)
+            LAST_RUN_SUMMARY = summary_text
+            messagebox.showinfo("Complete", f"Output:\n{out_path}\nSummary:\n{summary_path}")
             return
-        filtered_dir = RESULT_DIR / f"vlen{vlen_min}"
-        filtered_dir.mkdir(exist_ok=True)
-        filtered_path = filtered_dir / (out_path.stem + f".vlenmin{vlen_min}.tsv")
+        filtered_path = out_dir / f"igblast.airr.vlenmin{vlen_min}.tsv"
         log("Filtering TSV by vlen_ungapped...")
         try:
             summary = filter_airr_tsv(out_path, filtered_path, vlen_min, log)
@@ -177,9 +248,18 @@ def run_igblast(input_path, vlen_min, log):
             log(f"Filter error: {exc}")
             messagebox.showwarning("Complete", f"Output:\n{out_path}\nFiltered: failed (see log)")
             return
+        summary_path, summary_text = write_summary(
+            out_dir,
+            in_path,
+            out_path,
+            vlen_min,
+            filter_summary=summary,
+            filtered_path=filtered_path,
+        )
+        LAST_RUN_SUMMARY = summary_text
         messagebox.showinfo(
             "Complete",
-            f"Output:\n{out_path}\nFiltered:\n{filtered_path}\n{summary}",
+            f"Output:\n{out_path}\nFiltered:\n{filtered_path}\nSummary:\n{summary_path}\n{summary}",
         )
     else:
         messagebox.showerror("Error", "IgBLAST failed. Check log.")
@@ -230,6 +310,16 @@ def main():
         run_igblast(input_var.get().strip(), vlen_min, log)
 
     tk.Button(frame, text="Run", command=run).grid(row=4, column=0, pady=10, sticky="w")
+    def copy_summary():
+        if not LAST_RUN_SUMMARY:
+            messagebox.showinfo("Copy summary", "No summary to copy yet.")
+            return
+        root.clipboard_clear()
+        root.clipboard_append(LAST_RUN_SUMMARY)
+        root.update()
+        messagebox.showinfo("Copy summary", "Copied to clipboard.")
+
+    tk.Button(frame, text="Copy summary", command=copy_summary).grid(row=4, column=1, pady=10, sticky="e")
 
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(3, weight=1)
