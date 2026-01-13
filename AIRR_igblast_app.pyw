@@ -5,15 +5,20 @@ from pathlib import Path
 import ctypes
 import csv
 from datetime import datetime
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
 RESULT_DIR = APP_DIR / "result_AIRR_outfmat"
 # Full path to reference data (can include non-ASCII).
-REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ")
-IGBLAST = Path(r"C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe")
+DEFAULT_REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ")
+DEFAULT_IGBLAST = Path(r"C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe")
+REF_DIR_FULL = DEFAULT_REF_DIR_FULL
+IGBLAST = DEFAULT_IGBLAST
 REF_DIR_USE = None
+CONFIG_PATH = APP_DIR / "config.json"
+MKLINK_WARNED = False
 
 KERNEL32 = ctypes.windll.kernel32
 KERNEL32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -30,11 +35,12 @@ LAST_RUN_SUMMARY = ""
 INVALID_NAME_CHARS = '<>:"/\\|?*'
 MAX_PATH_LEN = 240
 FILE_PREFIX_MAX = 60
+THREAD_DEFAULT = ""
 
 
 def short_path(path_str):
-    buf = ctypes.create_unicode_buffer(260)
-    ret = KERNEL32.GetShortPathNameW(path_str, buf, 260)
+    buf = ctypes.create_unicode_buffer(32768)
+    ret = KERNEL32.GetShortPathNameW(path_str, buf, len(buf))
     return buf.value if ret else path_str
 
 
@@ -44,6 +50,37 @@ def sanitize_name(name):
     ).rstrip(" .")
     return safe if safe else "output"
 
+
+def load_config():
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as fin:
+            data = json.load(fin)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_config(igblast_path, ref_dir, threads):
+    data = {
+        "igblast_path": igblast_path,
+        "ref_dir": ref_dir,
+        "threads": threads,
+    }
+    with CONFIG_PATH.open("w", encoding="utf-8") as fout:
+        json.dump(data, fout, ensure_ascii=False, indent=2)
+
+
+def apply_config(data):
+    global IGBLAST, REF_DIR_FULL, REF_DIR_USE
+    igblast_path = data.get("igblast_path")
+    ref_dir = data.get("ref_dir")
+    if igblast_path:
+        IGBLAST = Path(igblast_path)
+    if ref_dir:
+        REF_DIR_FULL = Path(ref_dir)
+        REF_DIR_USE = None
 
 def make_file_prefix(name, max_len):
     safe = sanitize_name(name)
@@ -103,12 +140,28 @@ def make_output_names(out_dir, stem, vlen_min, log=None):
     return "igblast.airr.tsv", f"igblast.airr.vlenmin{vlen_min}.tsv"
 
 
-def write_summary(out_dir, in_path, out_path, vlen_min, filter_summary=None, filtered_path=None):
+def write_summary(
+    out_dir,
+    in_path,
+    out_path,
+    vlen_min,
+    igblast_path,
+    ref_dir,
+    threads,
+    filter_summary=None,
+    filtered_path=None,
+):
     lines = [
         f"Run folder: {out_dir}",
         f"Input: {in_path}",
         f"Output: {out_path}",
+        f"IgBLAST: {igblast_path}",
+        f"Refdata: {ref_dir}",
     ]
+    if threads:
+        lines.append(f"Threads: {threads}")
+    else:
+        lines.append("Threads: default")
     if vlen_min is None:
         lines.append("Filter: none")
     else:
@@ -125,7 +178,7 @@ def write_summary(out_dir, in_path, out_path, vlen_min, filter_summary=None, fil
 
 
 def get_ref_dir():
-    global REF_DIR_USE
+    global REF_DIR_USE, MKLINK_WARNED
     if REF_DIR_USE is not None:
         return REF_DIR_USE
 
@@ -138,13 +191,26 @@ def get_ref_dir():
     junction = APP_DIR / "refdata"
     if not junction.exists():
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(junction), str(REF_DIR_FULL)],
                 capture_output=True,
                 text=True,
             )
-        except Exception:
-            pass
+            if proc.returncode != 0 and not MKLINK_WARNED:
+                details = (proc.stderr or proc.stdout or "").strip()
+                msg = "Failed to create junction for reference data.\n"
+                msg += "Please move the ref data to an ASCII path, or enable Developer Mode / run as admin.\n"
+                if details:
+                    msg += f"\nDetails:\n{details}"
+                messagebox.showwarning("Reference data", msg)
+                MKLINK_WARNED = True
+        except Exception as exc:
+            if not MKLINK_WARNED:
+                messagebox.showwarning(
+                    "Reference data",
+                    f"Failed to create junction for reference data.\n{exc}",
+                )
+                MKLINK_WARNED = True
     if junction.exists():
         REF_DIR_USE = junction
         return REF_DIR_USE
@@ -160,9 +226,12 @@ def check_prereq():
     ref_dir = get_ref_dir()
     db_dir = ref_dir / "db"
     aux_file = ref_dir / "optional_file" / "human_gl.aux"
-    for name in ("IMGT_IGHV.imgt.nsq", "IMGT_IGHD.imgt.nsq", "IMGT_IGHJ.imgt.nsq"):
-        if not (db_dir / name).exists():
-            missing.append(str(db_dir / name))
+    db_bases = ("IMGT_IGHV.imgt", "IMGT_IGHD.imgt", "IMGT_IGHJ.imgt")
+    for base in db_bases:
+        for ext in (".nin", ".nhr", ".nsq"):
+            path = db_dir / f"{base}{ext}"
+            if not path.exists():
+                missing.append(str(path))
     if not aux_file.exists():
         missing.append(str(aux_file))
     if missing:
@@ -205,7 +274,20 @@ def filter_airr_tsv(in_path, out_path, vlen_min, log):
     return summary
 
 
-def run_igblast(input_path, vlen_min, log):
+def parse_threads(text):
+    value = text.strip()
+    if not value:
+        return None
+    try:
+        num = int(value)
+    except ValueError as exc:
+        raise ValueError("Threads must be a positive integer.") from exc
+    if num <= 0:
+        raise ValueError("Threads must be a positive integer.")
+    return num
+
+
+def run_igblast(input_path, vlen_min, num_threads, log):
     global LAST_RUN_SUMMARY
     LAST_RUN_SUMMARY = ""
     if not check_prereq():
@@ -246,6 +328,8 @@ def run_igblast(input_path, vlen_min, log):
         "-outfmt", "19",
         "-out", short_path(str(out_path)),
     ]
+    if num_threads:
+        args.extend(["-num_threads", str(num_threads)])
 
     log("Running IgBLAST...")
     try:
@@ -262,7 +346,15 @@ def run_igblast(input_path, vlen_min, log):
     if proc.returncode == 0 and out_path.exists():
         log(f"Done: {out_path}")
         if vlen_min is None:
-            summary_path, summary_text = write_summary(out_dir, in_path, out_path, vlen_min)
+            summary_path, summary_text = write_summary(
+                out_dir,
+                in_path,
+                out_path,
+                vlen_min,
+                str(IGBLAST),
+                str(REF_DIR_FULL),
+                num_threads,
+            )
             LAST_RUN_SUMMARY = summary_text
             messagebox.showinfo("Complete", f"Output:\n{out_path}\nSummary:\n{summary_path}")
             return
@@ -279,6 +371,9 @@ def run_igblast(input_path, vlen_min, log):
             in_path,
             out_path,
             vlen_min,
+            str(IGBLAST),
+            str(REF_DIR_FULL),
+            num_threads,
             filter_summary=summary,
             filtered_path=filtered_path,
         )
@@ -294,17 +389,20 @@ def run_igblast(input_path, vlen_min, log):
 def main():
     root = tk.Tk()
     root.title("Merged FASTA -> AIRR outfmt 19")
-    root.geometry("720x360")
+    root.geometry("840x540")
 
     frame = tk.Frame(root, padx=10, pady=10)
     frame.pack(fill=tk.BOTH, expand=True)
+
+    config = load_config()
+    apply_config(config)
 
     tk.Label(frame, text="Merged FASTA (extendedFrags.fasta):").grid(row=0, column=0, sticky="w")
     input_var = tk.StringVar()
     entry = tk.Entry(frame, textvariable=input_var, width=80)
     entry.grid(row=1, column=0, padx=(0, 8), sticky="we")
 
-    def browse():
+    def browse_input():
         path = filedialog.askopenfilename(
             title="Select FASTA",
             filetypes=[("FASTA", "*.fasta;*.fa;*.fna"), ("All", "*.*")],
@@ -312,19 +410,67 @@ def main():
         if path:
             input_var.set(path)
 
-    tk.Button(frame, text="Browse", command=browse).grid(row=1, column=1, sticky="e")
+    tk.Button(frame, text="Browse", command=browse_input).grid(row=1, column=1, sticky="e")
 
-    tk.Label(frame, text="Filter (vlen_ungapped):").grid(row=2, column=0, sticky="w")
+    tk.Label(frame, text="IgBLAST exe:").grid(row=2, column=0, sticky="w")
+    igblast_var = tk.StringVar(value=config.get("igblast_path", str(IGBLAST)))
+    igblast_entry = tk.Entry(frame, textvariable=igblast_var, width=80)
+    igblast_entry.grid(row=3, column=0, padx=(0, 8), sticky="we")
+
+    def browse_igblast():
+        path = filedialog.askopenfilename(
+            title="Select igblastn.exe",
+            filetypes=[("igblastn.exe", "igblastn.exe"), ("EXE", "*.exe"), ("All", "*.*")],
+        )
+        if path:
+            igblast_var.set(path)
+
+    tk.Button(frame, text="Browse", command=browse_igblast).grid(row=3, column=1, sticky="e")
+
+    tk.Label(frame, text="Reference data folder:").grid(row=4, column=0, sticky="w")
+    ref_var = tk.StringVar(value=config.get("ref_dir", str(REF_DIR_FULL)))
+    ref_entry = tk.Entry(frame, textvariable=ref_var, width=80)
+    ref_entry.grid(row=5, column=0, padx=(0, 8), sticky="we")
+
+    def browse_ref():
+        path = filedialog.askdirectory(title="Select reference data folder")
+        if path:
+            ref_var.set(path)
+
+    tk.Button(frame, text="Browse", command=browse_ref).grid(row=5, column=1, sticky="e")
+
+    tk.Label(frame, text="Threads (-num_threads):").grid(row=6, column=0, sticky="w")
+    threads_value = config.get("threads", THREAD_DEFAULT)
+    threads_var = tk.StringVar(value="" if threads_value is None else str(threads_value))
+    threads_entry = tk.Entry(frame, textvariable=threads_var, width=10)
+    threads_entry.grid(row=7, column=0, sticky="w")
+
+    tk.Label(frame, text="Filter (vlen_ungapped):").grid(row=8, column=0, sticky="w")
     filter_labels = [label for label, _ in FILTER_OPTIONS]
     filter_var = tk.StringVar(value=filter_labels[0])
-    tk.OptionMenu(frame, filter_var, *filter_labels).grid(row=2, column=1, sticky="w")
+    tk.OptionMenu(frame, filter_var, *filter_labels).grid(row=8, column=1, sticky="w")
 
     log_box = tk.Text(frame, height=10)
-    log_box.grid(row=3, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
+    log_box.grid(row=9, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
 
     def log(msg):
         log_box.insert(tk.END, msg + "\n")
         log_box.see(tk.END)
+
+    def update_settings():
+        global IGBLAST, REF_DIR_FULL, REF_DIR_USE
+        igblast_path = igblast_var.get().strip() or str(DEFAULT_IGBLAST)
+        ref_path = ref_var.get().strip() or str(DEFAULT_REF_DIR_FULL)
+        try:
+            threads = parse_threads(threads_var.get())
+        except ValueError as exc:
+            messagebox.showerror("Threads", str(exc))
+            return None, False
+        IGBLAST = Path(igblast_path)
+        REF_DIR_FULL = Path(ref_path)
+        REF_DIR_USE = None
+        save_config(igblast_path, ref_path, threads)
+        return threads, True
 
     def run():
         label = filter_var.get()
@@ -333,9 +479,16 @@ def main():
             if opt_label == label:
                 vlen_min = opt_value
                 break
-        run_igblast(input_var.get().strip(), vlen_min, log)
+        threads, ok = update_settings()
+        if not ok:
+            return
+        run_igblast(input_var.get().strip(), vlen_min, threads, log)
 
-    tk.Button(frame, text="Run", command=run).grid(row=4, column=0, pady=10, sticky="w")
+    def save_settings():
+        _, ok = update_settings()
+        if ok:
+            messagebox.showinfo("Settings", "Settings saved.")
+
     def copy_summary():
         if not LAST_RUN_SUMMARY:
             messagebox.showinfo("Copy summary", "No summary to copy yet.")
@@ -345,10 +498,14 @@ def main():
         root.update()
         messagebox.showinfo("Copy summary", "Copied to clipboard.")
 
-    tk.Button(frame, text="Copy summary", command=copy_summary).grid(row=4, column=1, pady=10, sticky="e")
+    button_frame = tk.Frame(frame)
+    button_frame.grid(row=10, column=0, columnspan=2, pady=10, sticky="we")
+    tk.Button(button_frame, text="Run", command=run).pack(side=tk.LEFT)
+    tk.Button(button_frame, text="Save settings", command=save_settings).pack(side=tk.LEFT, padx=(8, 0))
+    tk.Button(button_frame, text="Copy summary", command=copy_summary).pack(side=tk.RIGHT)
 
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(3, weight=1)
+    frame.rowconfigure(9, weight=1)
 
     root.mainloop()
 

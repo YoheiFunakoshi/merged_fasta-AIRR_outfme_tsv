@@ -7,6 +7,8 @@
 - AIRR outfmt 19 TSVを出力
 - vlen_ungapped フィルタをかけた別TSVを任意で出力（元TSVは保持）
 - 実行ごとに結果とsummaryを1フォルダにまとめて出力
+- IgBLAST/参照データのパスをGUIで選択して保存
+- `-num_threads` を指定して高速化（任意）
 
 ## アプリの場所
 - 起動用ショートカット: `AIRR_igblast_app.lnk`
@@ -100,12 +102,16 @@ for inp in inputs:
 ## アプリの使い方
 1. `AIRR_igblast_app.lnk` をダブルクリック
 2. マージ済みFASTA（extendedFrags.fasta）を選択
-3. Filter（vlen_ungapped）を選択（任意、なし/80/100/120/150）
-4. Runを押す
-5. `result_AIRR_outfmat/<入力名>__vlen{N or nofilter}__YYYYmmdd_HHMMSS/` が作成される
-6. フォルダ内に `<入力名>.igblast.airr.tsv` と `summary.txt` が出力される
-7. フィルタ有効時は `<入力名>.igblast.airr.vlenmin{N}.tsv` が追加で出力される
-8. 必要なら「Copy summary」でフィルタ結果サマリをクリップボードにコピー
+3. IgBLAST exe / Reference data folder / Threads を必要に応じて設定
+4. Filter（vlen_ungapped）を選択（任意、なし/80/100/120/150）
+5. Runを押す（設定は自動保存）
+6. `result_AIRR_outfmat/<入力名>__vlen{N or nofilter}__YYYYmmdd_HHMMSS/` が作成される
+7. フォルダ内に `<入力名>.igblast.airr.tsv` と `summary.txt` が出力される
+8. フィルタ有効時は `<入力名>.igblast.airr.vlenmin{N}.tsv` が追加で出力される
+9. 必要なら「Copy summary」でフィルタ結果サマリをクリップボードにコピー
+
+### 設定の保存
+- 画面の設定は `config.json` に保存されます（Run/Save settingsで更新）。
 
 ### 出力フォルダの中身
 - `<入力名>.igblast.airr.tsv`: 元のIgBLAST出力（変更しない）
@@ -117,6 +123,9 @@ for inp in inputs:
 Run folder: ...\result_AIRR_outfmat\<入力名>__vlen150__YYYYmmdd_HHMMSS
 Input: C:\path\to\input.fasta
 Output: ...\<入力名>.igblast.airr.tsv
+IgBLAST: C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe
+Refdata: C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ
+Threads: 4
 Filter: vlen_ungapped >= 150
 Filtered: ...\<入力名>.igblast.airr.vlenmin150.tsv
 Filter vlen_ungapped >= 150: kept 17096/29395, missing 46
