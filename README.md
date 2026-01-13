@@ -121,6 +121,36 @@ for inp in inputs:
 - Filter (vlen_ungapped): `v_sequence_alignment` のギャップ除外長でフィルタします（なし/80/100/120/150）。
 - Log: 実行ログと警告を表示します。
 
+### 各項目のデフォルト/意義/注意点
+- Merged FASTA
+  - デフォルト: 空欄（毎回選択）
+  - 意義: 入力FASTAを指定
+  - 注意点: マージ済みFASTA（extendedFrags.fasta など）を選択
+- IgBLAST exe
+  - デフォルト: 既定パス（未設定なら `C:/Program Files/NCBI/igblast-1.21.0/bin/igblastn.exe`）
+  - 意義: IgBLAST本体の場所を指定
+  - 注意点: バージョン違いで出力が変わる場合があるため、変更したら summary を確認
+- Reference data folder
+  - デフォルト: 既定パス（未設定なら `C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ`）
+  - 意義: V/D/J DB と補助データを参照
+  - 注意点: `db/` と `optional_file/` が必要
+- Threads (-num_threads)
+  - デフォルト: 空欄（IgBLASTのデフォルト動作）
+  - 意義: 速度改善（CPU並列）
+  - 注意点: 入れすぎると他作業が遅くなる
+- V_penalty
+  - デフォルト: 空欄（IgBLASTのデフォルト動作）
+  - 意義: 「短い高類似」より「長い一致」を優先しやすくする調整
+  - 注意点: v_identity/SHMの解釈に影響し得るため、変更したら条件を記録
+- Extend align 5' end
+  - デフォルト: OFF
+  - 意義: 5'側の表示を拡張（確認用途）
+  - 注意点: v_sequence_alignment が長く見えるため、vlen_ungapped フィルタと併用時は注意
+- Filter (vlen_ungapped)
+  - デフォルト: なし（元TSVのみ出力）
+  - 意義: 短いVアラインを除外した別TSVを作成
+  - 注意点: `NA`/空は除外されるため、件数差が出る
+
 ### ボタンの使い方
 - Run: 設定を保存してIgBLASTを実行します。
 - Save settings: 実行せず設定だけ保存します。
