@@ -110,6 +110,19 @@ for inp in inputs:
 8. フィルタ有効時は `<入力名>.igblast.airr.vlenmin{N}.tsv` が追加で出力される
 9. 必要なら「Copy summary」でフィルタ結果サマリをクリップボードにコピー
 
+### 画面項目の意味
+- Merged FASTA: マージ済みFASTA（extendedFrags.fasta）を指定します。
+- IgBLAST exe: `igblastn.exe` のパスを指定します。
+- Reference data folder: `db/`、`internal_data/`、`optional_file/` を含む参照データのルートフォルダです。
+- Threads (-num_threads): IgBLASTのスレッド数です。空欄ならデフォルト動作です。
+- Filter (vlen_ungapped): `v_sequence_alignment` のギャップ除外長でフィルタします（なし/80/100/120/150）。
+- Log: 実行ログと警告を表示します。
+
+### ボタンの使い方
+- Run: 設定を保存してIgBLASTを実行します。
+- Save settings: 実行せず設定だけ保存します。
+- Copy summary: `summary.txt` と同じ内容をクリップボードへコピーします。
+
 ### 設定の保存
 - 画面の設定は `config.json` に保存されます（Run/Save settingsで更新）。
 
