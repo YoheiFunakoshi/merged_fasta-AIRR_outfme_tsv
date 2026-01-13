@@ -53,6 +53,14 @@ def sanitize_name(name):
     return safe if safe else "output"
 
 
+def is_ascii_path(path_str):
+    try:
+        path_str.encode("ascii")
+        return True
+    except Exception:
+        return False
+
+
 def load_config():
     if not CONFIG_PATH.exists():
         return {}
@@ -193,8 +201,10 @@ def get_ref_dir():
     if REF_DIR_USE is not None:
         return REF_DIR_USE
 
-    ref_short = Path(short_path(str(REF_DIR_FULL)))
-    if (ref_short / "db").exists():
+    original = str(REF_DIR_FULL)
+    short = short_path(original)
+    ref_short = Path(short)
+    if (ref_short / "db").exists() and is_ascii_path(short):
         REF_DIR_USE = ref_short
         return REF_DIR_USE
 
