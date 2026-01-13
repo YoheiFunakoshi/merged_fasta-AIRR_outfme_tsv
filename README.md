@@ -5,6 +5,7 @@
 ## できること
 - マージ済みFASTAを選択してIgBLASTを実行
 - AIRR outfmt 19 TSVを出力
+- vlen_ungapped フィルタをかけた別TSVを任意で出力（元TSVは保持）
 
 ## アプリの場所
 - 起動用ショートカット: `AIRR_igblast_app.lnk`
@@ -98,9 +99,16 @@ for inp in inputs:
 ## アプリの使い方
 1. `AIRR_igblast_app.lnk` をダブルクリック
 2. マージ済みFASTA（extendedFrags.fasta）を選択
-3. Runを押す
-4. `result_AIRR_outfmat` に `*.igblast.airr.tsv` が出力される
+3. Filter（vlen_ungapped）を選択（任意、なし/80/100/120/150）
+4. Runを押す
+5. `result_AIRR_outfmat` に `*.igblast.airr.tsv` が出力される
+6. フィルタ有効時は `result_AIRR_outfmat/vlen{N}/` に `*.igblast.airr.vlenmin{N}.tsv` が追加で出力される
 
 ## 補足
 - 参照DBは検体固有ではなく「ヒトIgH用の一般的DB」です。
 - 参照DBを更新したい場合は、IMGTのFASTAを更新し、makeblastdbを再実行してください。
+
+## 注意（vlen_ungapped フィルタ）
+- 元TSVは変更せず、フィルタ版は `result_AIRR_outfmat/vlen{N}/` に保存されます。
+- 判定は `v_sequence_alignment` から `vlen_ungapped` を算出します（`NA`/空は除外）。
+- フィルタを「なし」にすると元TSVのみ出力します。

@@ -3,6 +3,7 @@ import os
 import subprocess
 from pathlib import Path
 import ctypes
+import csv
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -16,6 +17,14 @@ REF_DIR_USE = None
 KERNEL32 = ctypes.windll.kernel32
 KERNEL32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
 KERNEL32.GetShortPathNameW.restype = ctypes.c_uint
+
+FILTER_OPTIONS = [
+    ("No filter (original only)", None),
+    ("vlen_ungapped >= 80", 80),
+    ("vlen_ungapped >= 100", 100),
+    ("vlen_ungapped >= 120", 120),
+    ("vlen_ungapped >= 150", 150),
+]
 
 
 def short_path(path_str):
@@ -72,7 +81,40 @@ def check_prereq():
     return True
 
 
-def run_igblast(input_path, log):
+def filter_airr_tsv(in_path, out_path, vlen_min, log):
+    total = 0
+    kept = 0
+    missing = 0
+    with open(in_path, "r", encoding="utf-8", errors="replace", newline="") as fin:
+        reader = csv.reader(fin, delimiter="\t")
+        header = next(reader, None)
+        if not header:
+            raise ValueError("TSV header missing.")
+        try:
+            v_idx = header.index("v_sequence_alignment")
+        except ValueError as exc:
+            raise ValueError("Missing column: v_sequence_alignment") from exc
+        with open(out_path, "w", encoding="utf-8", newline="") as fout:
+            writer = csv.writer(fout, delimiter="\t", lineterminator="\n")
+            writer.writerow(header)
+            for row in reader:
+                if not row:
+                    continue
+                total += 1
+                v_seq = row[v_idx] if v_idx < len(row) else ""
+                if not v_seq or v_seq == "NA":
+                    missing += 1
+                    continue
+                vlen = len(v_seq.replace("-", ""))
+                if vlen >= vlen_min:
+                    writer.writerow(row)
+                    kept += 1
+    summary = f"Filter vlen_ungapped >= {vlen_min}: kept {kept}/{total}, missing {missing}"
+    log(summary)
+    return summary
+
+
+def run_igblast(input_path, vlen_min, log):
     if not check_prereq():
         return
     if not input_path:
@@ -122,7 +164,23 @@ def run_igblast(input_path, log):
 
     if proc.returncode == 0 and out_path.exists():
         log(f"Done: {out_path}")
-        messagebox.showinfo("Complete", f"Output:\n{out_path}")
+        if vlen_min is None:
+            messagebox.showinfo("Complete", f"Output:\n{out_path}")
+            return
+        filtered_dir = RESULT_DIR / f"vlen{vlen_min}"
+        filtered_dir.mkdir(exist_ok=True)
+        filtered_path = filtered_dir / (out_path.stem + f".vlenmin{vlen_min}.tsv")
+        log("Filtering TSV by vlen_ungapped...")
+        try:
+            summary = filter_airr_tsv(out_path, filtered_path, vlen_min, log)
+        except Exception as exc:
+            log(f"Filter error: {exc}")
+            messagebox.showwarning("Complete", f"Output:\n{out_path}\nFiltered: failed (see log)")
+            return
+        messagebox.showinfo(
+            "Complete",
+            f"Output:\n{out_path}\nFiltered:\n{filtered_path}\n{summary}",
+        )
     else:
         messagebox.showerror("Error", "IgBLAST failed. Check log.")
 
@@ -150,20 +208,31 @@ def main():
 
     tk.Button(frame, text="Browse", command=browse).grid(row=1, column=1, sticky="e")
 
+    tk.Label(frame, text="Filter (vlen_ungapped):").grid(row=2, column=0, sticky="w")
+    filter_labels = [label for label, _ in FILTER_OPTIONS]
+    filter_var = tk.StringVar(value=filter_labels[0])
+    tk.OptionMenu(frame, filter_var, *filter_labels).grid(row=2, column=1, sticky="w")
+
     log_box = tk.Text(frame, height=10)
-    log_box.grid(row=2, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
+    log_box.grid(row=3, column=0, columnspan=2, pady=(10, 0), sticky="nsew")
 
     def log(msg):
         log_box.insert(tk.END, msg + "\n")
         log_box.see(tk.END)
 
     def run():
-        run_igblast(input_var.get().strip(), log)
+        label = filter_var.get()
+        vlen_min = None
+        for opt_label, opt_value in FILTER_OPTIONS:
+            if opt_label == label:
+                vlen_min = opt_value
+                break
+        run_igblast(input_var.get().strip(), vlen_min, log)
 
-    tk.Button(frame, text="Run", command=run).grid(row=3, column=0, pady=10, sticky="w")
+    tk.Button(frame, text="Run", command=run).grid(row=4, column=0, pady=10, sticky="w")
 
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(2, weight=1)
+    frame.rowconfigure(3, weight=1)
 
     root.mainloop()
 
