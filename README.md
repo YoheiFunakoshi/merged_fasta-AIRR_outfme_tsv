@@ -20,9 +20,11 @@
 - IgBLAST: `C:/Program Files/NCBI/igblast-1.21.0/bin/igblastn.exe`
 
 ## 参照データの場所（デスクトップ上）
-`C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ`
+- デフォルト（edit_imgt_file.pl DB）: `C:/Users/Yohei Funakoshi/Desktop/IgBlast_refdata_edit_imgt`
+- Legacy（python DB）: `C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ`
 
 このフォルダは **アプリから参照される必須データ** です。削除しないでください。  
+GUIの「Preset」でデフォルト/Legacyを切り替えできます。  
 フォルダ名/場所を変更した場合は `AIRR_igblast_app.pyw` の `REF_DIR_FULL` を更新してください。  
 非ASCIIパスが原因で参照エラーになる場合、アプリが `refdata` というASCII名のジャンクションを自動作成します。
 
@@ -40,8 +42,9 @@
 
 ### 2) 参照データフォルダを作成
 ```
-C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ
+C:/Users/Yohei Funakoshi/Desktop/IgBlast_refdata_edit_imgt
 ```
+（Legacyを残す場合は `C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ` も保持）
 
 ### 3) internal_data / optional_file をコピー
 IgBLASTインストール先からコピーします。
@@ -53,7 +56,7 @@ C:/Program Files/NCBI/igblast-1.21.0/optional_file
 ### 4) IMGTからヒトIgHのV/D/J FASTAを取得
 IMGTのページから Human の IGHV / IGHD / IGHJ をダウンロードし、以下に保存します。
 ```
-C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ/IMGT_raw
+C:/Users/Yohei Funakoshi/Desktop/IgBlast_refdata_edit_imgt/IMGT_raw
 ```
 ファイル名例:
 - `IMGT_IGHV.fasta`
@@ -61,31 +64,27 @@ C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ/IMGT_raw
 - `IMGT_IGHJ.fasta`
 
 ### 5) IMGTヘッダを簡略化（imgt.fasta作成）
-IMGTのヘッダをIgBLASTが扱いやすい形式にします。
+IMGTのヘッダをIgBLASTが扱いやすい形式にします。**デフォルトは edit_imgt_file.pl** です。
 
-**Python例（Perlが無い場合）**
-```python
-from pathlib import Path
+**edit_imgt_file.pl（推奨）**
+```
+perl "C:/Program Files/NCBI/igblast-1.21.0/bin/edit_imgt_file.pl" IMGT_IGHV.fasta > IMGT_IGHV.imgt.fasta
+perl "C:/Program Files/NCBI/igblast-1.21.0/bin/edit_imgt_file.pl" IMGT_IGHD.fasta > IMGT_IGHD.imgt.fasta
+perl "C:/Program Files/NCBI/igblast-1.21.0/bin/edit_imgt_file.pl" IMGT_IGHJ.fasta > IMGT_IGHJ.imgt.fasta
+```
+バッチ用ラッパー（PowerShell）: `scripts/edit_imgt_headers_with_edit_imgt_file.ps1`
+```
+powershell -ExecutionPolicy Bypass -File scripts/edit_imgt_headers_with_edit_imgt_file.ps1 `
+  -EditImgtFile "C:/Program Files/NCBI/igblast-1.21.0/bin/edit_imgt_file.pl" `
+  -InputDir "C:/path/to/IMGT_raw" `
+  -OutputDir "C:/path/to/IMGT_edited"
+```
 
-ref = Path(r"C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ")
-inputs = [
-    ref/"IMGT_raw"/"IMGT_IGHV.fasta",
-    ref/"IMGT_raw"/"IMGT_IGHD.fasta",
-    ref/"IMGT_raw"/"IMGT_IGHJ.fasta",
-]
-
-for inp in inputs:
-    outp = inp.with_suffix(".imgt.fasta")
-    with inp.open("r", encoding="utf-8", errors="ignore") as fin, outp.open("w", encoding="ascii", errors="ignore") as fout:
-        for line in fin:
-            if line.startswith(">"):
-                parts = line[1:].strip().split("|")
-                gene = parts[1].strip() if len(parts) >= 2 and parts[1].strip() else line[1:].strip()
-                fout.write(">" + gene + "\n")
-            else:
-                seq = line.strip().upper()
-                if seq:
-                    fout.write(seq + "\n")
+**Python代替（必要時のみ）**
+Perlが使えない場合に限り `scripts/edit_imgt_headers_python.py` を使用します。  
+他者と共有する場合は「edit_imgt_file.pl と同等変換」であることを明記し、スクリプト/実行コマンドも共有してください。
+```
+python scripts/edit_imgt_headers_python.py --input-dir "C:/path/to/IMGT_raw" --output-dir "C:/path/to/IMGT_edited"
 ```
 
 出力例:
@@ -103,7 +102,7 @@ for inp in inputs:
 ## アプリの使い方
 1. `AIRR_igblast_app.lnk` をダブルクリック
 2. マージ済みFASTA（extendedFrags.fasta）を選択
-3. IgBLAST exe / Reference data folder / Threads を必要に応じて設定
+3. IgBLAST exe / Preset / Reference data folder / Threads を必要に応じて設定
 4. Filter（vlen_ungapped）を選択（任意、なし/80/100/120/150）
 5. Runを押す（設定は自動保存）
 6. `result_AIRR_outfmat/<入力名>__vlen{N or nofilter}__YYYYmmdd_HHMMSS/` が作成される
@@ -114,6 +113,7 @@ for inp in inputs:
 ### 画面項目の意味
 - Merged FASTA: マージ済みFASTA（extendedFrags.fasta）を指定します。
 - IgBLAST exe: `igblastn.exe` のパスを指定します。
+- Preset: 参照DBのプリセットです（edit_imgt_file.pl DB / Legacy DB / Custom）。
 - Reference data folder: `db/`、`internal_data/`、`optional_file/` を含む参照データのルートフォルダです。
 - Threads (-num_threads): IgBLASTのスレッド数です。空欄ならデフォルト動作です。
 - V_penalty: Vアラインのミスマッチペナルティです（例: -1, -3）。空欄ならデフォルト動作です。
@@ -131,9 +131,13 @@ for inp in inputs:
   - 意義: IgBLAST本体の場所を指定
   - 注意点: バージョン違いで出力が変わる場合があるため、変更したら summary を確認
 - Reference data folder
-  - デフォルト: 既定パス（未設定なら `C:/Users/Yohei Funakoshi/Desktop/IgBlast用参照データ`）
+  - デフォルト: Preset=edit_imgt_file.pl DB の場合 `C:/Users/Yohei Funakoshi/Desktop/IgBlast_refdata_edit_imgt`
   - 意義: V/D/J DB と補助データを参照
   - 注意点: `db/` と `optional_file/` が必要
+- Preset
+  - デフォルト: edit_imgt_file.pl DB
+  - 意義: 参照DBをワンクリックで切り替え
+  - 注意点: Legacy DB は旧手順再現/比較用。Custom を選ぶ場合は参照フォルダの中身を必ず確認
 - Threads (-num_threads)
   - デフォルト: 空欄（IgBLASTのデフォルト動作）
   - 意義: 速度改善（CPU並列）
@@ -158,6 +162,7 @@ for inp in inputs:
 
 ### 設定の保存
 - 画面の設定は `config.json` に保存されます（Run/Save settingsで更新）。
+- `config.json` はPC固有の設定のため、共有用にはREADME/手順書に条件を記載してください。
 
 ### 出力フォルダの中身
 - `<入力名>.igblast.airr.tsv`: 元のIgBLAST出力（変更しない）
@@ -170,18 +175,22 @@ Run folder: ...\result_AIRR_outfmat\<入力名>__vlen150__YYYYmmdd_HHMMSS
 Input: C:\path\to\input.fasta
 Output: ...\<入力名>.igblast.airr.tsv
 IgBLAST: C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe
-Refdata: C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ
+Refdata: C:\Users\Yohei Funakoshi\Desktop\IgBlast_refdata_edit_imgt
+Input FASTA records: 110830
+Output TSV rows: 110830
 Threads: 4
 V_penalty: -1
 Extend_align5end: on
 Filter: vlen_ungapped >= 150
 Filtered: ...\<入力名>.igblast.airr.vlenmin150.tsv
+Filtered TSV rows: 17096
 Filter vlen_ungapped >= 150: kept 17096/29395, missing 46
 Timestamp: 2026-01-13 21:47:27
 ```
 
 ## 補足
 - 参照DBは検体固有ではなく「ヒトIgH用の一般的DB」です。
+- デフォルトは edit_imgt_file.pl 由来DBです。Legacy DB は旧手順の再現/比較用として保持しています。
 - 参照DBを更新したい場合は、IMGTのFASTAを更新し、makeblastdbを再実行してください。
 
 ## 注意（vlen_ungapped フィルタ）

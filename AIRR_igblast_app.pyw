@@ -3,6 +3,7 @@ import os
 import subprocess
 from pathlib import Path
 import ctypes
+import stat
 import csv
 from datetime import datetime
 import json
@@ -12,7 +13,9 @@ from tkinter import filedialog, messagebox
 APP_DIR = Path(__file__).resolve().parent
 RESULT_DIR = APP_DIR / "result_AIRR_outfmat"
 # Full path to reference data (can include non-ASCII).
-DEFAULT_REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast用参照データ")
+EDIT_IMGT_REF_DIR_FULL = Path(r"C:\Users\Yohei Funakoshi\Desktop\IgBlast_refdata_edit_imgt")
+LEGACY_REF_DIR_FULL = Path("C:\\Users\\Yohei Funakoshi\\Desktop\\IgBlast" + "\u7528\u53c2\u7167\u30c7\u30fc\u30bf")
+DEFAULT_REF_DIR_FULL = EDIT_IMGT_REF_DIR_FULL
 DEFAULT_IGBLAST = Path(r"C:\Program Files\NCBI\igblast-1.21.0\bin\igblastn.exe")
 REF_DIR_FULL = DEFAULT_REF_DIR_FULL
 IGBLAST = DEFAULT_IGBLAST
@@ -30,6 +33,12 @@ FILTER_OPTIONS = [
     ("vlen_ungapped >= 100", 100),
     ("vlen_ungapped >= 120", 120),
     ("vlen_ungapped >= 150", 150),
+]
+CUSTOM_REF_LABEL = "Custom (manual)"
+REFDATA_PRESETS = [
+    ("edit_imgt_file.pl DB (default)", EDIT_IMGT_REF_DIR_FULL),
+    ("Legacy DB (python)", LEGACY_REF_DIR_FULL),
+    (CUSTOM_REF_LABEL, None),
 ]
 LAST_RUN_SUMMARY = ""
 INVALID_NAME_CHARS = '<>:"/\\|?*'
@@ -61,6 +70,18 @@ def is_ascii_path(path_str):
         return False
 
 
+
+def normalize_path(path_str):
+    return str(path_str).rstrip("\\/").casefold()
+
+def preset_label_for_path(path_str):
+    if not path_str:
+        return CUSTOM_REF_LABEL
+    for label, path in REFDATA_PRESETS:
+        if path and normalize_path(path_str) == normalize_path(path):
+            return label
+    return CUSTOM_REF_LABEL
+
 def load_config():
     if not CONFIG_PATH.exists():
         return {}
@@ -91,7 +112,11 @@ def apply_config(data):
     if igblast_path:
         IGBLAST = Path(igblast_path)
     if ref_dir:
-        REF_DIR_FULL = Path(ref_dir)
+        ref_path = Path(ref_dir)
+        if ref_path.exists():
+            REF_DIR_FULL = ref_path
+        else:
+            REF_DIR_FULL = DEFAULT_REF_DIR_FULL
         REF_DIR_USE = None
 
 def make_file_prefix(name, max_len):
@@ -162,6 +187,9 @@ def write_summary(
     threads,
     v_penalty,
     extend_align5end,
+    input_records=None,
+    output_rows=None,
+    filtered_rows=None,
     filter_summary=None,
     filtered_path=None,
 ):
@@ -172,6 +200,10 @@ def write_summary(
         f"IgBLAST: {igblast_path}",
         f"Refdata: {ref_dir}",
     ]
+    if input_records is not None:
+        lines.append(f"Input FASTA records: {input_records}")
+    if output_rows is not None:
+        lines.append(f"Output TSV rows: {output_rows}")
     if threads:
         lines.append(f"Threads: {threads}")
     else:
@@ -187,6 +219,8 @@ def write_summary(
         lines.append(f"Filter: vlen_ungapped >= {vlen_min}")
     if filtered_path is not None:
         lines.append(f"Filtered: {filtered_path}")
+    if filtered_rows is not None:
+        lines.append(f"Filtered TSV rows: {filtered_rows}")
     if filter_summary:
         lines.append(filter_summary)
     lines.append(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -194,6 +228,24 @@ def write_summary(
     summary_path = out_dir / "summary.txt"
     summary_path.write_text(text, encoding="utf-8")
     return summary_path, text
+
+
+def is_reparse_point(path):
+    try:
+        return bool(os.stat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    except Exception:
+        return False
+
+
+def refdata_ok(ref_dir):
+    db_dir = ref_dir / "db"
+    aux_file = ref_dir / "optional_file" / "human_gl.aux"
+    db_bases = ("IMGT_IGHV.imgt", "IMGT_IGHD.imgt", "IMGT_IGHJ.imgt")
+    for base in db_bases:
+        for ext in (".nin", ".nhr", ".nsq"):
+            if not (db_dir / f"{base}{ext}").exists():
+                return False
+    return aux_file.exists()
 
 
 def get_ref_dir():
@@ -204,12 +256,17 @@ def get_ref_dir():
     original = str(REF_DIR_FULL)
     short = short_path(original)
     ref_short = Path(short)
-    if (ref_short / "db").exists() and is_ascii_path(short):
+    if is_ascii_path(short) and refdata_ok(ref_short):
         REF_DIR_USE = ref_short
         return REF_DIR_USE
 
     # Create an ASCII junction under the app folder if 8.3 short path isn't available.
     junction = APP_DIR / "refdata"
+    if junction.exists() and not refdata_ok(junction) and is_reparse_point(junction):
+        try:
+            os.rmdir(junction)
+        except Exception:
+            pass
     if not junction.exists():
         try:
             proc = subprocess.run(
@@ -232,7 +289,7 @@ def get_ref_dir():
                     f"Failed to create junction for reference data.\n{exc}",
                 )
                 MKLINK_WARNED = True
-    if junction.exists():
+    if junction.exists() and refdata_ok(junction):
         REF_DIR_USE = junction
         return REF_DIR_USE
 
@@ -293,6 +350,27 @@ def filter_airr_tsv(in_path, out_path, vlen_min, log):
     summary = f"Filter vlen_ungapped >= {vlen_min}: kept {kept}/{total}, missing {missing}"
     log(summary)
     return summary
+
+
+def count_fasta_records(path):
+    count = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as fin:
+        for line in fin:
+            if line.startswith(">"):
+                count += 1
+    return count
+
+
+def count_tsv_rows(path):
+    count = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as fin:
+        header = fin.readline()
+        if not header:
+            return 0
+        for line in fin:
+            if line.strip():
+                count += 1
+    return count
 
 
 def parse_threads(text):
@@ -381,6 +459,16 @@ def run_igblast(input_path, vlen_min, num_threads, v_penalty, extend_align5end, 
 
     if proc.returncode == 0 and out_path.exists():
         log(f"Done: {out_path}")
+        input_records = None
+        output_rows = None
+        try:
+            input_records = count_fasta_records(in_path)
+        except Exception as exc:
+            log(f"Input FASTA count failed: {exc}")
+        try:
+            output_rows = count_tsv_rows(out_path)
+        except Exception as exc:
+            log(f"Output TSV count failed: {exc}")
         if vlen_min is None:
             summary_path, summary_text = write_summary(
                 out_dir,
@@ -392,6 +480,8 @@ def run_igblast(input_path, vlen_min, num_threads, v_penalty, extend_align5end, 
                 num_threads,
                 v_penalty,
                 extend_align5end,
+                input_records=input_records,
+                output_rows=output_rows,
             )
             LAST_RUN_SUMMARY = summary_text
             messagebox.showinfo("Complete", f"Output:\n{out_path}\nSummary:\n{summary_path}")
@@ -404,6 +494,11 @@ def run_igblast(input_path, vlen_min, num_threads, v_penalty, extend_align5end, 
             log(f"Filter error: {exc}")
             messagebox.showwarning("Complete", f"Output:\n{out_path}\nFiltered: failed (see log)")
             return
+        filtered_rows = None
+        try:
+            filtered_rows = count_tsv_rows(filtered_path)
+        except Exception as exc:
+            log(f"Filtered TSV count failed: {exc}")
         summary_path, summary_text = write_summary(
             out_dir,
             in_path,
@@ -414,6 +509,9 @@ def run_igblast(input_path, vlen_min, num_threads, v_penalty, extend_align5end, 
             num_threads,
             v_penalty,
             extend_align5end,
+            input_records=input_records,
+            output_rows=output_rows,
+            filtered_rows=filtered_rows,
             filter_summary=summary,
             filtered_path=filtered_path,
         )
@@ -468,7 +566,34 @@ def main():
     tk.Button(frame, text="Browse", command=browse_igblast).grid(row=3, column=1, sticky="e")
 
     tk.Label(frame, text="Reference data folder:").grid(row=4, column=0, sticky="w")
-    ref_var = tk.StringVar(value=config.get("ref_dir", str(REF_DIR_FULL)))
+    ref_value = config.get("ref_dir", "")
+    if ref_value and not Path(ref_value).exists():
+        ref_value = ""
+    if not ref_value:
+        ref_value = str(REF_DIR_FULL)
+    ref_var = tk.StringVar(value=ref_value)
+    ref_preset_var = tk.StringVar(value=preset_label_for_path(ref_value))
+    preset_labels = [label for label, _ in REFDATA_PRESETS]
+
+    def apply_ref_preset(*_):
+        label = ref_preset_var.get()
+        for opt_label, opt_path in REFDATA_PRESETS:
+            if opt_label == label and opt_path:
+                ref_var.set(str(opt_path))
+                return
+
+    def sync_ref_preset(*_):
+        label = preset_label_for_path(ref_var.get())
+        if ref_preset_var.get() != label:
+            ref_preset_var.set(label)
+
+    ref_var.trace_add("write", sync_ref_preset)
+
+    preset_frame = tk.Frame(frame)
+    tk.Label(preset_frame, text="Preset:").pack(side=tk.LEFT)
+    tk.OptionMenu(preset_frame, ref_preset_var, *preset_labels, command=apply_ref_preset).pack(side=tk.LEFT)
+    preset_frame.grid(row=4, column=1, sticky="e")
+
     ref_entry = tk.Entry(frame, textvariable=ref_var, width=80)
     ref_entry.grid(row=5, column=0, padx=(0, 8), sticky="we")
 
